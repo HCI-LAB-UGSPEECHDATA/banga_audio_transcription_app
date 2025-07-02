@@ -20,14 +20,14 @@ class TranscriptionApp:
         # Initialize variables
         self.theme_index = 0
         self.phrase_index = 0
-        self.alt_phrase_index = 1
-        self.alt_phrase_data = {}
+        self.current_version = "Original"  # Changed from alt_phrase_index
+        self.phrase_data = {}  # Changed from alt_phrase_data
         self.themes = []
         self.phrases = {}
         
         # Load data
         self.load_themes_and_phrases()
-        self.initialize_alt_phrase_data()
+        self.initialize_phrase_data()
         self.load_existing_metadata()
 
         # Apply modern styling
@@ -134,7 +134,7 @@ class TranscriptionApp:
         
         self.theme_var = tk.StringVar(value=self.themes[0] if self.themes else "No Themes")
         self.theme_combo = ttk.Combobox(selection_frame, textvariable=self.theme_var, 
-                                       state="readonly", width=15)  # Reduced from 20 to 15
+                                       state="readonly", width=15)
         self.theme_combo['values'] = self.themes
         self.theme_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 20))
         self.theme_combo.bind('<<ComboboxSelected>>', self.update_theme)
@@ -145,19 +145,19 @@ class TranscriptionApp:
         
         self.phrase_var = tk.StringVar()
         self.phrase_combo = ttk.Combobox(selection_frame, textvariable=self.phrase_var, 
-                                        state="readonly", width=50)  # Increased from 30 to 50
+                                        state="readonly", width=50)
         self.phrase_combo.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=(0, 20))
         self.phrase_combo.bind('<<ComboboxSelected>>', self.update_phrase)
         
-        # Alternate phrase selection
-        ttk.Label(selection_frame, text="Alternative:", font=('Segoe UI', 9, 'bold')).grid(
+        # Version selection (Original + Alternatives)
+        ttk.Label(selection_frame, text="Version:", font=('Segoe UI', 9, 'bold')).grid(
             row=0, column=4, sticky=tk.W, padx=(0, 10))
         
-        self.alt_phrase_var = tk.StringVar()
-        self.alt_phrase_combo = ttk.Combobox(selection_frame, textvariable=self.alt_phrase_var, 
-                                           state="readonly", width=12)  # Reduced from 15 to 12
-        self.alt_phrase_combo.grid(row=0, column=5, sticky=(tk.W, tk.E))
-        self.alt_phrase_combo.bind('<<ComboboxSelected>>', self.update_alt_phrase)
+        self.version_var = tk.StringVar()
+        self.version_combo = ttk.Combobox(selection_frame, textvariable=self.version_var, 
+                                         state="readonly", width=12)
+        self.version_combo.grid(row=0, column=5, sticky=(tk.W, tk.E))
+        self.version_combo.bind('<<ComboboxSelected>>', self.update_version)
 
     def create_transcription_panel(self):
         """Create the transcription input panel"""
@@ -210,20 +210,20 @@ class TranscriptionApp:
         history_header.grid_columnconfigure(0, weight=1)
         
         ttk.Button(history_header, text="+ New Alternative", 
-                  command=self.add_alt_phrase).grid(row=0, column=1, sticky=tk.E)
+                  command=self.add_alternative).grid(row=0, column=1, sticky=tk.E)
         
         # Treeview for better display
-        columns = ('Alternative', 'Transcription', 'Length')
+        columns = ('Version', 'Transcription', 'Length')
         self.history_tree = ttk.Treeview(history_frame, columns=columns, show='headings', height=8)
         
-        # Configure columns - reduced width for Length column
-        self.history_tree.heading('Alternative', text='Alternative')
+        # Configure columns
+        self.history_tree.heading('Version', text='Version')
         self.history_tree.heading('Transcription', text='Transcription')
         self.history_tree.heading('Length', text='Length')
         
-        self.history_tree.column('Alternative', width=80, minwidth=80)
+        self.history_tree.column('Version', width=80, minwidth=80)
         self.history_tree.column('Transcription', width=450, minwidth=200)
-        self.history_tree.column('Length', width=60, minwidth=50)  # Reduced from 80 to 60
+        self.history_tree.column('Length', width=60, minwidth=50)
         
         self.history_tree.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         self.history_tree.bind('<<TreeviewSelect>>', self.on_history_select)
@@ -283,17 +283,15 @@ class TranscriptionApp:
             self.themes = ["Default Theme"]
             self.phrases = {"Default Theme": ["Default Phrase"]}
 
-    def initialize_alt_phrase_data(self):
-        """Initialize alternate phrase data structure"""
+    def initialize_phrase_data(self):
+        """Initialize phrase data structure with Original transcription"""
         for theme in self.themes:
             for phrase in self.phrases[theme]:
-                if (theme, phrase) not in self.alt_phrase_data:
-                    self.alt_phrase_data[(theme, phrase)] = []
-                if not self.alt_phrase_data[(theme, phrase)]:
-                    self.alt_phrase_data[(theme, phrase)].append({
-                        "alt_phrase": 1,
-                        "transcription": ""
-                    })
+                if (theme, phrase) not in self.phrase_data:
+                    self.phrase_data[(theme, phrase)] = {
+                        "Original": "",
+                        "alternatives": {}
+                    }
 
     def load_existing_metadata(self):
         """Load existing transcription data"""
@@ -306,24 +304,26 @@ class TranscriptionApp:
                 for _, row in df.iterrows():
                     theme = str(row["Theme"]).strip()
                     phrase = str(row["Phrase"]).strip()
-                    if (theme, phrase) not in self.alt_phrase_data:
-                        self.alt_phrase_data[(theme, phrase)] = []
-                    alt_phrase_cols = [col for col in df.columns if col.startswith("Alternate_Phrase_") and col.endswith("_Transcription")]
+                    if (theme, phrase) not in self.phrase_data:
+                        self.phrase_data[(theme, phrase)] = {
+                            "Original": "",
+                            "alternatives": {}
+                        }
+                    
+                    # Load Original transcription
+                    if "Original_Transcription" in df.columns:
+                        original_trans = str(row.get("Original_Transcription", ""))
+                        if original_trans and original_trans != "nan":
+                            self.phrase_data[(theme, phrase)]["Original"] = original_trans
+                    
+                    # Load alternative transcriptions
+                    alt_phrase_cols = [col for col in df.columns if col.startswith("Alternative_") and col.endswith("_Transcription")]
                     for trans_col in alt_phrase_cols:
-                        alt_num = int(trans_col.split("_")[2])
+                        alt_num = int(trans_col.split("_")[1])
                         transcription = str(row.get(trans_col, ""))
-                        if transcription:
-                            entry_exists = False
-                            for entry in self.alt_phrase_data[(theme, phrase)]:
-                                if entry["alt_phrase"] == alt_num:
-                                    entry["transcription"] = transcription
-                                    entry_exists = True
-                                    break
-                            if not entry_exists:
-                                self.alt_phrase_data[(theme, phrase)].append({
-                                    "alt_phrase": alt_num,
-                                    "transcription": transcription
-                                })
+                        if transcription and transcription != "nan":
+                            self.phrase_data[(theme, phrase)]["alternatives"][alt_num] = transcription
+                            
             except Exception as e:
                 messagebox.showwarning("Warning", f"Error loading existing data: {e}")
 
@@ -334,8 +334,9 @@ class TranscriptionApp:
             self.update_phrase_combo()
             if self.phrases[self.themes[0]]:
                 self.phrase_var.set(self.phrases[self.themes[0]][0])
-                self.update_alt_phrase_combo()
-                self.alt_phrase_var.set("Alternative 1")
+                self.update_version_combo()
+                self.version_var.set("Original")
+                self.current_version = "Original"
                 self.update_current_phrase_display()
                 self.update_history()
                 self.update_transcription_field()
@@ -348,16 +349,19 @@ class TranscriptionApp:
         phrases = self.phrases[current_theme]
         self.phrase_combo['values'] = phrases
 
-    def update_alt_phrase_combo(self):
-        """Update alternate phrase combobox values"""
+    def update_version_combo(self):
+        """Update version combobox values (Original + Alternatives)"""
         if not self.themes:
             return
         current_theme = self.themes[self.theme_index]
         current_phrase = self.phrases[current_theme][self.phrase_index]
-        alt_phrases = [f"Alternative {entry['alt_phrase']}" for entry in self.alt_phrase_data[(current_theme, current_phrase)]]
-        if not alt_phrases:
-            alt_phrases = ["Alternative 1"]
-        self.alt_phrase_combo['values'] = alt_phrases
+        
+        versions = ["Original"]
+        alternatives = self.phrase_data[(current_theme, current_phrase)]["alternatives"]
+        for alt_num in sorted(alternatives.keys()):
+            versions.append(f"Alternative {alt_num}")
+        
+        self.version_combo['values'] = versions
 
     def update_current_phrase_display(self):
         """Update the current phrase display"""
@@ -375,9 +379,9 @@ class TranscriptionApp:
         current_theme = self.themes[self.theme_index]
         if self.phrases[current_theme]:
             self.phrase_var.set(self.phrases[current_theme][0])
-        self.update_alt_phrase_combo()
-        self.alt_phrase_index = 1
-        self.alt_phrase_var.set("Alternative 1")
+        self.update_version_combo()
+        self.current_version = "Original"
+        self.version_var.set("Original")
         self.update_current_phrase_display()
         self.update_history()
         self.update_transcription_field()
@@ -389,31 +393,39 @@ class TranscriptionApp:
         current_theme = self.themes[self.theme_index]
         self.phrase_index = self.phrases[current_theme].index(self.phrase_var.get())
         current_phrase = self.phrases[current_theme][self.phrase_index]
-        if (current_theme, current_phrase) not in self.alt_phrase_data:
-            self.alt_phrase_data[(current_theme, current_phrase)] = [{"alt_phrase": 1, "transcription": ""}]
-        self.update_alt_phrase_combo()
-        self.alt_phrase_index = 1
-        self.alt_phrase_var.set("Alternative 1")
+        if (current_theme, current_phrase) not in self.phrase_data:
+            self.phrase_data[(current_theme, current_phrase)] = {
+                "Original": "",
+                "alternatives": {}
+            }
+        self.update_version_combo()
+        self.current_version = "Original"
+        self.version_var.set("Original")
         self.update_current_phrase_display()
         self.update_history()
         self.update_transcription_field()
 
-    def update_alt_phrase(self, *args):
-        """Handle alternate phrase selection change"""
-        selected = self.alt_phrase_var.get()
-        if selected.startswith("Alternative "):
-            self.alt_phrase_index = int(selected.split()[1])
-            self.update_transcription_field()
+    def update_version(self, *args):
+        """Handle version selection change"""
+        selected = self.version_var.get()
+        self.current_version = selected
+        self.update_transcription_field()
 
     def update_transcription_field(self):
         """Update transcription text field"""
         self.transcription_text.delete("1.0", tk.END)
         current_theme = self.themes[self.theme_index]
         current_phrase = self.phrases[current_theme][self.phrase_index]
-        for entry in self.alt_phrase_data[(current_theme, current_phrase)]:
-            if entry["alt_phrase"] == self.alt_phrase_index and entry["transcription"]:
-                self.transcription_text.insert("1.0", entry["transcription"])
-                break
+        
+        if self.current_version == "Original":
+            transcription = self.phrase_data[(current_theme, current_phrase)]["Original"]
+        else:
+            # Extract alternative number
+            alt_num = int(self.current_version.split()[1])
+            transcription = self.phrase_data[(current_theme, current_phrase)]["alternatives"].get(alt_num, "")
+        
+        if transcription:
+            self.transcription_text.insert("1.0", transcription)
 
     def on_history_select(self, event):
         """Handle history selection"""
@@ -422,30 +434,33 @@ class TranscriptionApp:
             return
         item = self.history_tree.item(selection[0])
         version_text = item['values'][0]
-        version_num = int(version_text.split()[1])
-        self.alt_phrase_index = version_num
-        self.alt_phrase_var.set(f"Alternative {version_num}")
+        self.current_version = version_text
+        self.version_var.set(version_text)
         self.update_transcription_field()
-        self.status_label.config(text=f"Selected Alternative {version_num}")
+        self.status_label.config(text=f"Selected {version_text}")
 
-    def add_alt_phrase(self):
-        """Add new alternate phrase version"""
+    def add_alternative(self):
+        """Add new alternative version"""
         if not self.themes:
             return
         current_theme = self.themes[self.theme_index]
         current_phrase = self.phrases[current_theme][self.phrase_index]
-        max_alt = max(entry["alt_phrase"] for entry in self.alt_phrase_data[(current_theme, current_phrase)]) if self.alt_phrase_data[(current_theme, current_phrase)] else 0
+        
+        # Find next available alternative number
+        alternatives = self.phrase_data[(current_theme, current_phrase)]["alternatives"]
+        max_alt = max(alternatives.keys()) if alternatives else 0
         new_alt_num = max_alt + 1
-        self.alt_phrase_data[(current_theme, current_phrase)].append({
-            "alt_phrase": new_alt_num,
-            "transcription": ""
-        })
-        self.update_alt_phrase_combo()
-        self.alt_phrase_var.set(f"Alternative {new_alt_num}")
-        self.alt_phrase_index = new_alt_num
+        
+        # Add empty alternative
+        self.phrase_data[(current_theme, current_phrase)]["alternatives"][new_alt_num] = ""
+        
+        self.update_version_combo()
+        new_version = f"Alternative {new_alt_num}"
+        self.version_var.set(new_version)
+        self.current_version = new_version
         self.update_transcription_field()
         self.update_history()
-        self.status_label.config(text=f"Created Alternative {new_alt_num}")
+        self.status_label.config(text=f"Created {new_version}")
 
     def save_transcription(self):
         """Save current transcription"""
@@ -456,19 +471,14 @@ class TranscriptionApp:
         
         current_theme = self.themes[self.theme_index]
         current_phrase = self.phrases[current_theme][self.phrase_index]
-        entry_exists = False
-        for entry in self.alt_phrase_data[(current_theme, current_phrase)]:
-            if entry["alt_phrase"] == self.alt_phrase_index:
-                entry["transcription"] = transcription
-                entry_exists = True
-                break
-        if not entry_exists:
-            self.alt_phrase_data[(current_theme, current_phrase)].append({
-                "alt_phrase": self.alt_phrase_index,
-                "transcription": transcription
-            })
         
-        self.status_label.config(text=f"✅ Saved Version {self.alt_phrase_index}")
+        if self.current_version == "Original":
+            self.phrase_data[(current_theme, current_phrase)]["Original"] = transcription
+        else:
+            alt_num = int(self.current_version.split()[1])
+            self.phrase_data[(current_theme, current_phrase)]["alternatives"][alt_num] = transcription
+        
+        self.status_label.config(text=f"✅ Saved {self.current_version}")
         self.transcription_text.delete("1.0", tk.END)
         self.update_history()
         self.update_stats()
@@ -481,11 +491,21 @@ class TranscriptionApp:
         
         current_theme = self.themes[self.theme_index]
         current_phrase = self.phrases[current_theme][self.phrase_index]
-        for entry in self.alt_phrase_data[(current_theme, current_phrase)]:
-            version = f"Version {entry['alt_phrase']}"
-            transcription = entry["transcription"] if entry["transcription"] else "No transcription"
-            length = len(entry["transcription"]) if entry["transcription"] else 0
-            # Truncate long transcriptions for display
+        phrase_data = self.phrase_data[(current_theme, current_phrase)]
+        
+        # Add Original
+        original_trans = phrase_data["Original"]
+        display_original = original_trans if original_trans else "No transcription"
+        length = len(original_trans) if original_trans else 0
+        display_trans = display_original[:50] + "..." if len(display_original) > 50 else display_original
+        self.history_tree.insert("", "end", values=("Original", display_trans, length))
+        
+        # Add Alternatives
+        for alt_num in sorted(phrase_data["alternatives"].keys()):
+            alt_trans = phrase_data["alternatives"][alt_num]
+            version = f"Alternative {alt_num}"
+            transcription = alt_trans if alt_trans else "No transcription"
+            length = len(alt_trans) if alt_trans else 0
             display_trans = transcription[:50] + "..." if len(transcription) > 50 else transcription
             self.history_tree.insert("", "end", values=(version, display_trans, length))
 
@@ -499,35 +519,48 @@ class TranscriptionApp:
         
         total_themes = len(self.themes)
         total_phrases = sum(len(self.phrases[theme]) for theme in self.themes)
-        total_transcriptions = 0
+        total_originals = 0
+        total_alternatives = 0
         total_chars = 0
         
-        for key in self.alt_phrase_data:
-            for entry in self.alt_phrase_data[key]:
-                if entry["transcription"]:
-                    total_transcriptions += 1
-                    total_chars += len(entry["transcription"])
+        for key in self.phrase_data:
+            # Count original transcriptions
+            if self.phrase_data[key]["Original"]:
+                total_originals += 1
+                total_chars += len(self.phrase_data[key]["Original"])
+            
+            # Count alternative transcriptions
+            for alt_trans in self.phrase_data[key]["alternatives"].values():
+                if alt_trans:
+                    total_alternatives += 1
+                    total_chars += len(alt_trans)
+        
+        total_transcriptions = total_originals + total_alternatives
         
         stats.append(f"Total Themes: {total_themes}")
         stats.append(f"Total Phrases: {total_phrases}")
-        stats.append(f"Completed Transcriptions: {total_transcriptions}")
+        stats.append(f"Original Transcriptions: {total_originals}")
+        stats.append(f"Alternative Transcriptions: {total_alternatives}")
+        stats.append(f"Total Transcriptions: {total_transcriptions}")
         stats.append(f"Total Characters: {total_chars:,}")
         
         if total_transcriptions > 0:
             stats.append(f"Average Length: {total_chars // total_transcriptions} characters")
         
-        completion_rate = (total_transcriptions / total_phrases * 100) if total_phrases > 0 else 0
-        stats.append(f"Completion Rate: {completion_rate:.1f}%")
+        completion_rate = (total_originals / total_phrases * 100) if total_phrases > 0 else 0
+        stats.append(f"Original Completion Rate: {completion_rate:.1f}%")
         
         stats.append("\n" + "BY THEME" + "\n" + "-"*20)
         for theme in self.themes:
             theme_phrases = len(self.phrases[theme])
-            theme_transcriptions = 0
+            theme_originals = 0
+            theme_alternatives = 0
             for phrase in self.phrases[theme]:
-                for entry in self.alt_phrase_data.get((theme, phrase), []):
-                    if entry["transcription"]:
-                        theme_transcriptions += 1
-            stats.append(f"{theme}: {theme_transcriptions}/{theme_phrases} phrases completed")
+                phrase_data = self.phrase_data.get((theme, phrase), {"Original": "", "alternatives": {}})
+                if phrase_data["Original"]:
+                    theme_originals += 1
+                theme_alternatives += len([alt for alt in phrase_data["alternatives"].values() if alt])
+            stats.append(f"{theme}: {theme_originals}/{theme_phrases} original, {theme_alternatives} alternatives")
         
         self.stats_text.insert("1.0", "\n".join(stats))
         self.stats_text.config(state='disabled')
@@ -540,25 +573,32 @@ class TranscriptionApp:
             excel_path = metadata_dir / "transcriptions.xlsx"
             
             all_data = []
-            max_alt_phrases = max(len(self.alt_phrase_data[key]) for key in self.alt_phrase_data) if self.alt_phrase_data else 1
+            max_alternatives = 0
             
-            for theme, phrase in sorted(self.alt_phrase_data.keys()):
-                phrase_data = {"Theme": theme, "Phrase": phrase}
-                transcriptions = self.alt_phrase_data[(theme, phrase)]
-                for alt in range(1, max_alt_phrases + 1):
-                    entry_for_alt_phrase = None
-                    for entry in transcriptions:
-                        if entry["alt_phrase"] == alt:
-                            entry_for_alt_phrase = entry
-                            break
-                    if entry_for_alt_phrase:
-                        phrase_data[f"Alternate_Phrase_{alt}_Transcription"] = entry_for_alt_phrase["transcription"]
-                    else:
-                        phrase_data[f"Alternate_Phrase_{alt}_Transcription"] = ""
-                all_data.append(phrase_data)
+            # Find maximum number of alternatives
+            for phrase_data in self.phrase_data.values():
+                if phrase_data["alternatives"]:
+                    max_alternatives = max(max_alternatives, max(phrase_data["alternatives"].keys()))
+            
+            for theme, phrase in sorted(self.phrase_data.keys()):
+                row_data = {
+                    "Theme": theme, 
+                    "Phrase": phrase,
+                    "Original_Transcription": self.phrase_data[(theme, phrase)]["Original"]
+                }
+                
+                # Add alternative transcriptions
+                alternatives = self.phrase_data[(theme, phrase)]["alternatives"]
+                for alt_num in range(1, max_alternatives + 1):
+                    row_data[f"Alternative_{alt_num}_Transcription"] = alternatives.get(alt_num, "")
+                
+                all_data.append(row_data)
             
             df = pd.DataFrame(all_data)
-            columns = ["Theme", "Phrase"] + [col for col in df.columns if col.startswith("Alternate_Phrase_")]
+            # Reorder columns to have Original first, then alternatives
+            base_columns = ["Theme", "Phrase", "Original_Transcription"]
+            alt_columns = [col for col in df.columns if col.startswith("Alternative_")]
+            columns = base_columns + sorted(alt_columns)
             df = df[columns]
             df.to_excel(excel_path, index=False)
             
