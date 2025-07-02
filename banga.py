@@ -1,666 +1,579 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from pathlib import Path
-import pyaudio
-import wave
 import pandas as pd
-from datetime import datetime
-import threading
-import time
-import os
-import numpy as np
+import uuid
 
 BASE_DIR = Path(__file__).parent
 
-class BangaApp:
+class TranscriptionApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Banga Audio Recorder")
+        self.root.title("Akan Transcription App")
+        self.root.geometry("1000x700")
+        self.root.minsize(800, 600)
+        
+        # Configure main window grid
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
+        # Initialize variables
+        self.theme_index = 0
         self.phrase_index = 0
-        self.synonym_index = 1
-        self.synonym_data = {}
-        self.phrases = []
-        self.recording = False
-        self.current_audio_path = None
-        self.playing = False
-        self.current_frame = 0
-        self.total_frames = 0
-        self.play_thread = None
-        self.playback_timer_thread = None
-        self.wf = None
-        self.stream = None
-        self.pyaudio_instance = None
-        self.recording_thread = None
-        self.timer_thread = None
-        self.synonym_menu = None
-        self.resources_cleaned = False
-
-        self.load_phrases()
-        for phrase in self.phrases:
-            if phrase not in self.synonym_data:
-                self.synonym_data[phrase] = []
+        self.alt_phrase_index = 1
+        self.alt_phrase_data = {}
+        self.themes = []
+        self.phrases = {}
+        
+        # Load data
+        self.load_themes_and_phrases()
+        self.initialize_alt_phrase_data()
         self.load_existing_metadata()
-        for phrase in self.phrases:
-            if not self.synonym_data[phrase]:
-                self.synonym_data[phrase].append({
-                    "synonym": 1,
-                    "audio_path": "",
-                    "transcription": ""
-                })
 
-        self.main_frame = ttk.Frame(self.root, padding="10")
-        self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Apply modern styling
+        self.setup_styles()
+        
+        # Create UI
+        self.create_ui()
+        
+        # Initialize selections
+        self.initialize_selections()
 
-        self.selection_frame = ttk.LabelFrame(self.main_frame, text="Select Phrase and Synonym", padding="5")
-        self.selection_frame.grid(row=0, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
+    def setup_styles(self):
+        """Configure modern styling for the application"""
+        style = ttk.Style()
+        
+        # Configure notebook style for tabs
+        style.configure('TNotebook', tabposition='n')
+        style.configure('TNotebook.Tab', padding=[12, 8])
+        
+        # Configure frame styles
+        style.configure('Card.TFrame', relief='raised', borderwidth=1)
+        style.configure('Header.TLabelframe', font=('Segoe UI', 10, 'bold'))
+        
+        # Configure button styles
+        style.configure('Primary.TButton', font=('Segoe UI', 9, 'bold'))
+        style.configure('Success.TButton', foreground='white')
+        
+    def create_ui(self):
+        """Create the main user interface"""
+        # Main container with padding
+        self.main_container = ttk.Frame(self.root, padding="20")
+        self.main_container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.main_container.grid_rowconfigure(1, weight=1)
+        self.main_container.grid_columnconfigure(0, weight=1)
 
-        self.phrase_label = ttk.Label(self.selection_frame, text="Phrase:")
-        self.phrase_label.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        self.phrase_var = tk.StringVar(value=self.phrases[0] if self.phrases else "No Phrases Loaded")
-        self.phrase_menu = ttk.OptionMenu(self.selection_frame, self.phrase_var, self.phrases[0] if self.phrases else "No Phrases Loaded", *self.phrases, command=self.update_phrase)
-        self.phrase_menu.grid(row=0, column=1, padx=5, pady=5)
+        # Header section
+        self.create_header()
+        
+        # Main content using notebook for better organization
+        self.create_notebook()
+        
+        # Status bar at bottom
+        self.create_status_bar()
 
-        self.synonym_label = ttk.Label(self.selection_frame, text="Synonym:")
-        self.synonym_label.grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        self.synonym_var = tk.StringVar(value=f"Synonym {self.synonym_index}")
-        self.update_synonym_menu()
+    def create_header(self):
+        """Create application header with title and controls"""
+        header_frame = ttk.Frame(self.main_container)
+        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 20))
+        header_frame.grid_columnconfigure(1, weight=1)
+        
+        # App title
+        title_label = ttk.Label(header_frame, text="Akan Transcription App", 
+                               font=('Segoe UI', 16, 'bold'))
+        title_label.grid(row=0, column=0, sticky=tk.W)
+        
+        # Quick save button in header
+        save_button = ttk.Button(header_frame, text="💾 Save to Excel", 
+                                style='Primary.TButton', command=self.save_to_excel)
+        save_button.grid(row=0, column=2, sticky=tk.E, padx=(10, 0))
 
-        self.add_synonym_button = ttk.Button(self.selection_frame, text="Add Synonym", command=self.add_synonym)
-        self.add_synonym_button.grid(row=1, column=2, padx=5, pady=5)
+    def create_notebook(self):
+        """Create notebook with tabs for better organization"""
+        self.notebook = ttk.Notebook(self.main_container)
+        self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Main transcription tab
+        self.main_tab = ttk.Frame(self.notebook, padding="15")
+        self.notebook.add(self.main_tab, text="📝 Transcription")
+        
+        # Data overview tab
+        self.overview_tab = ttk.Frame(self.notebook, padding="15")
+        self.notebook.add(self.overview_tab, text="📊 Overview")
+        
+        # Setup main tab content
+        self.setup_main_tab()
+        self.setup_overview_tab()
 
-        ttk.Separator(self.main_frame, orient=tk.HORIZONTAL).grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+    def setup_main_tab(self):
+        """Setup the main transcription tab"""
+        self.main_tab.grid_rowconfigure(2, weight=1)
+        self.main_tab.grid_columnconfigure(0, weight=1)
+        
+        # Selection panel
+        self.create_selection_panel()
+        
+        # Transcription panel
+        self.create_transcription_panel()
+        
+        # History panel
+        self.create_history_panel()
 
-        self.status_frame = ttk.LabelFrame(self.main_frame, text="Status", padding="5")
-        self.status_frame.grid(row=2, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
+    def create_selection_panel(self):
+        """Create the theme/phrase selection panel"""
+        selection_frame = ttk.LabelFrame(self.main_tab, text="📂 Selection", 
+                                       style='Header.TLabelframe', padding="15")
+        selection_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        selection_frame.grid_columnconfigure(1, weight=1)
+        selection_frame.grid_columnconfigure(3, weight=3)  # Give phrase column more weight
+        selection_frame.grid_columnconfigure(5, weight=1)
+        
+        # Theme selection
+        ttk.Label(selection_frame, text="Theme:", font=('Segoe UI', 9, 'bold')).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 10))
+        
+        self.theme_var = tk.StringVar(value=self.themes[0] if self.themes else "No Themes")
+        self.theme_combo = ttk.Combobox(selection_frame, textvariable=self.theme_var, 
+                                       state="readonly", width=15)  # Reduced from 20 to 15
+        self.theme_combo['values'] = self.themes
+        self.theme_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 20))
+        self.theme_combo.bind('<<ComboboxSelected>>', self.update_theme)
+        
+        # Phrase selection
+        ttk.Label(selection_frame, text="Phrase:", font=('Segoe UI', 9, 'bold')).grid(
+            row=0, column=2, sticky=tk.W, padx=(0, 10))
+        
+        self.phrase_var = tk.StringVar()
+        self.phrase_combo = ttk.Combobox(selection_frame, textvariable=self.phrase_var, 
+                                        state="readonly", width=50)  # Increased from 30 to 50
+        self.phrase_combo.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=(0, 20))
+        self.phrase_combo.bind('<<ComboboxSelected>>', self.update_phrase)
+        
+        # Alternate phrase selection
+        ttk.Label(selection_frame, text="Alternative:", font=('Segoe UI', 9, 'bold')).grid(
+            row=0, column=4, sticky=tk.W, padx=(0, 10))
+        
+        self.alt_phrase_var = tk.StringVar()
+        self.alt_phrase_combo = ttk.Combobox(selection_frame, textvariable=self.alt_phrase_var, 
+                                           state="readonly", width=12)  # Reduced from 15 to 12
+        self.alt_phrase_combo.grid(row=0, column=5, sticky=(tk.W, tk.E))
+        self.alt_phrase_combo.bind('<<ComboboxSelected>>', self.update_alt_phrase)
 
-        self.status_label = ttk.Label(self.status_frame, text="Ready to record")
-        self.status_label.grid(row=0, column=0, columnspan=2, pady=5)
+    def create_transcription_panel(self):
+        """Create the transcription input panel"""
+        trans_frame = ttk.LabelFrame(self.main_tab, text="✏️ Transcription", 
+                                   style='Header.TLabelframe', padding="15")
+        trans_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 15))
+        trans_frame.grid_rowconfigure(1, weight=1)
+        trans_frame.grid_columnconfigure(0, weight=1)
+        
+        # Current phrase display
+        self.current_phrase_label = ttk.Label(trans_frame, text="Current Phrase: ", 
+                                            font=('Segoe UI', 9, 'italic'),
+                                            foreground='gray')
+        self.current_phrase_label.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Text input with frame
+        input_frame = ttk.Frame(trans_frame)
+        input_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        input_frame.grid_rowconfigure(0, weight=1)
+        input_frame.grid_columnconfigure(0, weight=1)
+        
+        self.transcription_text = tk.Text(input_frame, height=4, font=('Segoe UI', 10),
+                                        wrap=tk.WORD, relief='solid', borderwidth=1)
+        self.transcription_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Scrollbar for text area
+        scrollbar = ttk.Scrollbar(input_frame, orient="vertical", command=self.transcription_text.yview)
+        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.transcription_text.configure(yscrollcommand=scrollbar.set)
+        
+        # Button frame - only save button now
+        button_frame = ttk.Frame(trans_frame)
+        button_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        
+        ttk.Button(button_frame, text="💾 Save Transcription", 
+                  style='Primary.TButton',
+                  command=self.save_transcription).grid(row=0, column=0, sticky=tk.E)
 
-        self.timer_label = ttk.Label(self.status_frame, text="00:00")
-        self.timer_label.grid(row=1, column=0, columnspan=2, pady=5)
+    def create_history_panel(self):
+        """Create the transcription history panel"""
+        history_frame = ttk.LabelFrame(self.main_tab, text="📜 History", 
+                                     style='Header.TLabelframe', padding="15")
+        history_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        history_frame.grid_rowconfigure(1, weight=1)
+        history_frame.grid_columnconfigure(0, weight=1)
+        
+        # Header with button
+        history_header = ttk.Frame(history_frame)
+        history_header.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        history_header.grid_columnconfigure(0, weight=1)
+        
+        ttk.Button(history_header, text="+ New Alternative", 
+                  command=self.add_alt_phrase).grid(row=0, column=1, sticky=tk.E)
+        
+        # Treeview for better display
+        columns = ('Alternative', 'Transcription', 'Length')
+        self.history_tree = ttk.Treeview(history_frame, columns=columns, show='headings', height=8)
+        
+        # Configure columns - reduced width for Length column
+        self.history_tree.heading('Alternative', text='Alternative')
+        self.history_tree.heading('Transcription', text='Transcription')
+        self.history_tree.heading('Length', text='Length')
+        
+        self.history_tree.column('Alternative', width=80, minwidth=80)
+        self.history_tree.column('Transcription', width=450, minwidth=200)
+        self.history_tree.column('Length', width=60, minwidth=50)  # Reduced from 80 to 60
+        
+        self.history_tree.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.history_tree.bind('<<TreeviewSelect>>', self.on_history_select)
+        
+        # Scrollbar for treeview
+        tree_scrollbar = ttk.Scrollbar(history_frame, orient="vertical", command=self.history_tree.yview)
+        tree_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        self.history_tree.configure(yscrollcommand=tree_scrollbar.set)
 
-        ttk.Separator(self.main_frame, orient=tk.HORIZONTAL).grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+    def setup_overview_tab(self):
+        """Setup the overview tab"""
+        self.overview_tab.grid_rowconfigure(0, weight=1)
+        self.overview_tab.grid_columnconfigure(0, weight=1)
+        
+        # Stats frame
+        stats_frame = ttk.LabelFrame(self.overview_tab, text="📈 Statistics", 
+                                   style='Header.TLabelframe', padding="15")
+        stats_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        self.stats_text = tk.Text(stats_frame, height=20, font=('Segoe UI', 10),
+                                state='disabled', wrap=tk.WORD)
+        self.stats_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Update stats initially
+        self.update_stats()
 
-        self.recording_frame = ttk.LabelFrame(self.main_frame, text="Recording Controls", padding="5")
-        self.recording_frame.grid(row=4, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
+    def create_status_bar(self):
+        """Create status bar at bottom"""
+        status_frame = ttk.Frame(self.main_container)
+        status_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        status_frame.grid_columnconfigure(1, weight=1)
+        
+        ttk.Label(status_frame, text="Status:").grid(row=0, column=0, sticky=tk.W)
+        
+        self.status_label = ttk.Label(status_frame, text="Ready to transcribe", 
+                                    relief='sunken', padding="5")
+        self.status_label.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(10, 0))
 
-        self.record_button = ttk.Button(self.recording_frame, text="Start Recording", command=self.start_recording)
-        self.record_button.grid(row=0, column=0, padx=5, pady=5)
-
-        self.stop_button = ttk.Button(self.recording_frame, text="Stop Recording", command=self.stop_recording, state=tk.DISABLED)
-        self.stop_button.grid(row=0, column=1, padx=5, pady=5)
-
-        self.playback_frame = ttk.LabelFrame(self.main_frame, text="Playback Controls", padding="5")
-        self.playback_frame.grid(row=5, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-
-        self.play_button = ttk.Button(self.playback_frame, text="Play", command=self.toggle_play_pause, state=tk.DISABLED)
-        self.play_button.grid(row=0, column=0, padx=5, pady=5)
-
-        self.new_recording_button = ttk.Button(self.playback_frame, text="Re-Record", command=self.reset_to_recording_mode)
-
-        self.progress_label = ttk.Label(self.playback_frame, text="Playback Progress:")
-        self.progress_label.grid(row=1, column=0, pady=5, sticky=tk.W)
-        self.progress_bar = ttk.Progressbar(self.playback_frame, length=200, mode='determinate')
-        self.progress_bar.grid(row=1, column=1, pady=5)
-
-        ttk.Separator(self.main_frame, orient=tk.HORIZONTAL).grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
-
-        self.transcription_frame = ttk.LabelFrame(self.main_frame, text="Transcription", padding="5")
-        self.transcription_frame.grid(row=7, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-
-        self.transcription_label = ttk.Label(self.transcription_frame, text="Transcription:")
-        self.transcription_label.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        self.transcription_entry = ttk.Entry(self.transcription_frame, width=30)
-        self.transcription_entry.grid(row=0, column=1, padx=5, pady=5)
-        self.save_trans_button = ttk.Button(self.transcription_frame, text="Save Transcription", command=self.save_transcription)
-        self.save_trans_button.grid(row=0, column=2, padx=5, pady=5)
-
-        self.recordings_frame = ttk.LabelFrame(self.main_frame, text="Recordings (Click to Play)", padding="5")
-        self.recordings_frame.grid(row=8, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))
-
-        self.recordings_listbox = tk.Listbox(self.recordings_frame, width=50, height=5)
-        self.recordings_listbox.grid(row=0, column=0, columnspan=3, padx=5, pady=5)
-        self.recordings_listbox.bind('<<ListboxSelect>>', self.on_recording_select)
-
-        self.save_excel_button = ttk.Button(self.main_frame, text="Save to Excel", command=self.save_to_excel)
-        self.save_excel_button.grid(row=9, column=0, columnspan=3, pady=10)
-
-        self.phrase_var.set(self.phrases[0] if self.phrases else "No Phrases Loaded")
-        self.synonym_var.set(f"Synonym {self.synonym_index}")
-        self.update_recordings_list()
-        self.update_transcription_field()
-        self.update_ui_for_recording_status()
-
-    def load_phrases(self):
-        phrases_path = BASE_DIR / "phrases.xlsx"
+    def load_themes_and_phrases(self):
+        """Load themes and phrases from Excel file"""
+        phrases_path = BASE_DIR / "FocusGroup_questions_v1.xlsx"
         if phrases_path.exists():
             try:
-                df = pd.read_excel(phrases_path)
-                if "Phrase" not in df.columns:
-                    raise ValueError("Excel file must contain a 'Phrase' column")
-                self.phrases = [str(phrase).strip() for phrase in df["Phrase"] if str(phrase).strip()]
+                xl = pd.ExcelFile(phrases_path)
+                self.themes = xl.sheet_names
+                self.phrases = {}
+                for theme in self.themes:
+                    df = pd.read_excel(phrases_path, sheet_name=theme)
+                    self.phrases[theme] = [str(row[0]).strip() for row in df.values if str(row[0]).strip()]
+                    if not self.phrases[theme]:
+                        self.phrases[theme] = ["Default Phrase"]
             except Exception as e:
-                print(f"Error loading phrases from Excel: {e}")
-                self.phrases = ["Default Phrase"]
+                messagebox.showerror("Error", f"Error loading themes and phrases: {e}")
+                self.themes = ["Default Theme"]
+                self.phrases = {"Default Theme": ["Default Phrase"]}
         else:
-            self.phrases = ["Default Phrase"]
-        if not self.phrases:
-            self.phrases = ["Default Phrase"]
+            self.themes = ["Default Theme"]
+            self.phrases = {"Default Theme": ["Default Phrase"]}
+
+    def initialize_alt_phrase_data(self):
+        """Initialize alternate phrase data structure"""
+        for theme in self.themes:
+            for phrase in self.phrases[theme]:
+                if (theme, phrase) not in self.alt_phrase_data:
+                    self.alt_phrase_data[(theme, phrase)] = []
+                if not self.alt_phrase_data[(theme, phrase)]:
+                    self.alt_phrase_data[(theme, phrase)].append({
+                        "alt_phrase": 1,
+                        "transcription": ""
+                    })
 
     def load_existing_metadata(self):
+        """Load existing transcription data"""
         metadata_dir = BASE_DIR / "metadata"
-        excel_path = metadata_dir / "all_phrases_recordings.xlsx"
+        excel_path = metadata_dir / "transcriptions.xlsx"
         if excel_path.exists():
             try:
                 df = pd.read_excel(excel_path)
                 df = df.fillna("")
                 for _, row in df.iterrows():
-                    phrase_key = str(row["Phrase"]).strip()
-                    if phrase_key not in self.synonym_data:
-                        self.synonym_data[phrase_key] = []
-                    synonym_cols = [col for col in df.columns if col.startswith("Synonym_") and col.endswith("_Audio")]
-                    for audio_col in synonym_cols:
-                        syn_num = int(audio_col.split("_")[1])
-                        trans_col = f"Synonym_{syn_num}_Transcription"
-                        audio_path = str(row.get(audio_col, ""))
+                    theme = str(row["Theme"]).strip()
+                    phrase = str(row["Phrase"]).strip()
+                    if (theme, phrase) not in self.alt_phrase_data:
+                        self.alt_phrase_data[(theme, phrase)] = []
+                    alt_phrase_cols = [col for col in df.columns if col.startswith("Alternate_Phrase_") and col.endswith("_Transcription")]
+                    for trans_col in alt_phrase_cols:
+                        alt_num = int(trans_col.split("_")[2])
                         transcription = str(row.get(trans_col, ""))
-                        if audio_path and not Path(audio_path).exists():
-                            audio_path = ""
-                        if audio_path or transcription:
+                        if transcription:
                             entry_exists = False
-                            for entry in self.synonym_data[phrase_key]:
-                                if entry["synonym"] == syn_num:
-                                    entry["audio_path"] = audio_path
+                            for entry in self.alt_phrase_data[(theme, phrase)]:
+                                if entry["alt_phrase"] == alt_num:
                                     entry["transcription"] = transcription
                                     entry_exists = True
                                     break
                             if not entry_exists:
-                                self.synonym_data[phrase_key].append({
-                                    "synonym": syn_num,
-                                    "audio_path": audio_path,
+                                self.alt_phrase_data[(theme, phrase)].append({
+                                    "alt_phrase": alt_num,
                                     "transcription": transcription
                                 })
             except Exception as e:
-                print(f"Error loading existing metadata: {e}")
+                messagebox.showwarning("Warning", f"Error loading existing data: {e}")
 
-    def update_synonym_menu(self):
-        if not self.phrases:
-            return
-        current_phrase = self.phrases[self.phrase_index]
-        synonyms = [f"Synonym {entry['synonym']}" for entry in self.synonym_data[current_phrase]]
-        if not synonyms:
-            synonyms = ["Synonym 1"]
-        if self.synonym_menu is not None:
-            self.synonym_menu.destroy()
-        self.synonym_var = tk.StringVar(value=synonyms[0])
-        self.synonym_menu = ttk.OptionMenu(self.selection_frame, self.synonym_var, synonyms[0], *synonyms, command=self.update_synonym)
-        self.synonym_menu.grid(row=1, column=1, padx=5, pady=5)
+    def initialize_selections(self):
+        """Initialize UI selections"""
+        if self.themes:
+            self.theme_var.set(self.themes[0])
+            self.update_phrase_combo()
+            if self.phrases[self.themes[0]]:
+                self.phrase_var.set(self.phrases[self.themes[0]][0])
+                self.update_alt_phrase_combo()
+                self.alt_phrase_var.set("Alternative 1")
+                self.update_current_phrase_display()
+                self.update_history()
+                self.update_transcription_field()
 
-    def add_synonym(self):
-        if not self.phrases:
-            self.status_label.config(text="Error: No phrases loaded")
+    def update_phrase_combo(self):
+        """Update phrase combobox values"""
+        if not self.themes:
             return
-        current_phrase = self.phrases[self.phrase_index]
-        max_synonym = max(entry["synonym"] for entry in self.synonym_data[current_phrase]) if self.synonym_data[current_phrase] else 0
-        new_synonym_num = max_synonym + 1
-        self.synonym_data[current_phrase].append({
-            "synonym": new_synonym_num,
-            "audio_path": "",
-            "transcription": ""
-        })
-        self.update_synonym_menu()
-        self.synonym_var.set(f"Synonym {new_synonym_num}")
-        self.synonym_index = new_synonym_num
+        current_theme = self.themes[self.theme_index]
+        phrases = self.phrases[current_theme]
+        self.phrase_combo['values'] = phrases
+
+    def update_alt_phrase_combo(self):
+        """Update alternate phrase combobox values"""
+        if not self.themes:
+            return
+        current_theme = self.themes[self.theme_index]
+        current_phrase = self.phrases[current_theme][self.phrase_index]
+        alt_phrases = [f"Alternative {entry['alt_phrase']}" for entry in self.alt_phrase_data[(current_theme, current_phrase)]]
+        if not alt_phrases:
+            alt_phrases = ["Alternative 1"]
+        self.alt_phrase_combo['values'] = alt_phrases
+
+    def update_current_phrase_display(self):
+        """Update the current phrase display"""
+        if self.themes and self.phrase_index < len(self.phrases[self.themes[self.theme_index]]):
+            current_phrase = self.phrases[self.themes[self.theme_index]][self.phrase_index]
+            self.current_phrase_label.config(text=f"Current Phrase: {current_phrase}")
+
+    def update_theme(self, *args):
+        """Handle theme selection change"""
+        if not self.themes:
+            return
+        self.theme_index = self.themes.index(self.theme_var.get())
+        self.phrase_index = 0
+        self.update_phrase_combo()
+        current_theme = self.themes[self.theme_index]
+        if self.phrases[current_theme]:
+            self.phrase_var.set(self.phrases[current_theme][0])
+        self.update_alt_phrase_combo()
+        self.alt_phrase_index = 1
+        self.alt_phrase_var.set("Alternative 1")
+        self.update_current_phrase_display()
+        self.update_history()
         self.update_transcription_field()
-        self.update_recordings_list()
-        self.update_ui_for_recording_status()
 
     def update_phrase(self, *args):
-        if not self.phrases:
-            self.status_label.config(text="Error: No phrases loaded")
+        """Handle phrase selection change"""
+        if not self.themes:
             return
-        self.phrase_index = self.phrases.index(self.phrase_var.get())
-        current_phrase = self.phrases[self.phrase_index]
-        if current_phrase not in self.synonym_data:
-            self.synonym_data[current_phrase] = [{"synonym": 1, "audio_path": "", "transcription": ""}]
-        self.update_synonym_menu()
-        self.synonym_index = 1
-        self.synonym_var.set(f"Synonym {self.synonym_index}")
-        self.update_recordings_list()
+        current_theme = self.themes[self.theme_index]
+        self.phrase_index = self.phrases[current_theme].index(self.phrase_var.get())
+        current_phrase = self.phrases[current_theme][self.phrase_index]
+        if (current_theme, current_phrase) not in self.alt_phrase_data:
+            self.alt_phrase_data[(current_theme, current_phrase)] = [{"alt_phrase": 1, "transcription": ""}]
+        self.update_alt_phrase_combo()
+        self.alt_phrase_index = 1
+        self.alt_phrase_var.set("Alternative 1")
+        self.update_current_phrase_display()
+        self.update_history()
         self.update_transcription_field()
-        self.update_ui_for_recording_status()
 
-    def update_synonym(self, *args):
-        self.synonym_index = int(self.synonym_var.get().split()[1])
-        self.update_transcription_field()
-        self.update_ui_for_recording_status()
-
-    def update_ui_for_recording_status(self):
-        if not self.phrases:
-            return
-        current_phrase = self.phrases[self.phrase_index]
-        recording_exists = False
-        for entry in self.synonym_data[current_phrase]:
-            if entry["synonym"] == self.synonym_index and entry["audio_path"]:
-                self.current_audio_path = entry["audio_path"]
-                if not self.recording:
-                    self.play_button.config(state=tk.NORMAL, text="Play")
-                    self.new_recording_button.grid(row=0, column=1, padx=5, pady=5)
-                self.record_button.grid_remove()
-                self.stop_button.grid_remove()
-                self.recording_frame.grid_remove()  # Hide the recording frame if a recording exists
-                self.status_label.config(text="Existing recording found. Play the audio or re-record.")
-                recording_exists = True
-                break
-        if not recording_exists:
-            self.current_audio_path = None
-            self.play_button.config(state=tk.DISABLED, text="Play")
-            self.new_recording_button.grid_remove()
-            self.recording_frame.grid(row=4, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))  # Show the recording frame
-            self.record_button.grid(row=0, column=0, padx=5, pady=5)
-            self.stop_button.grid(row=0, column=1, padx=5, pady=5)
-            self.status_label.config(text="No recording found. Start a new recording.")
-
-    def cleanup_audio_resources(self):
-        if self.resources_cleaned:
-            return
-        try:
-            if self.stream:
-                self.stream.stop_stream()
-                self.stream.close()
-                self.stream = None
-            if self.wf:
-                self.wf.close()
-                self.wf = None
-            if self.pyaudio_instance:
-                self.pyaudio_instance.terminate()
-                self.pyaudio_instance = None
-            self.resources_cleaned = True
-        except Exception as e:
-            print(f"Error during resource cleanup: {e}")
-
-    def on_recording_select(self, event):
-        selection = self.recordings_listbox.curselection()
-        if not selection:
-            return
-        index = selection[0]
-        current_phrase = self.phrases[self.phrase_index]
-        selected_entry = self.synonym_data[current_phrase][index]
-        if not selected_entry["audio_path"]:
-            self.status_label.config(text="Error: No audio file for this entry")
-            return
-        if self.playing or self.current_frame > 0:
-            self.playing = False
-            if self.play_thread and self.play_thread.is_alive():
-                self.play_thread.join(timeout=0.5)
-            if self.playback_timer_thread and self.playback_timer_thread.is_alive():
-                self.playback_timer_thread.join(timeout=0.5)
-            self.current_frame = 0
-            self.progress_bar['value'] = 0
-            self.timer_label.config(text="00:00")
-            self.cleanup_audio_resources()
-        self.current_audio_path = selected_entry["audio_path"]
-        if not self.recording:
-            self.play_button.config(state=tk.NORMAL, text="Play")
-            self.new_recording_button.grid(row=0, column=1, padx=5, pady=5)
-            self.status_label.config(text=f"Selected recording: {Path(self.current_audio_path).name}. Click Play to listen.")
-        else:
-            self.status_label.config(text=f"Cannot play: Recording in progress.")
+    def update_alt_phrase(self, *args):
+        """Handle alternate phrase selection change"""
+        selected = self.alt_phrase_var.get()
+        if selected.startswith("Alternative "):
+            self.alt_phrase_index = int(selected.split()[1])
+            self.update_transcription_field()
 
     def update_transcription_field(self):
-        self.transcription_entry.delete(0, tk.END)
-        current_phrase = self.phrases[self.phrase_index]
-        for entry in self.synonym_data[current_phrase]:
-            if entry["synonym"] == self.synonym_index and entry["transcription"]:
-                self.transcription_entry.insert(0, entry["transcription"])
+        """Update transcription text field"""
+        self.transcription_text.delete("1.0", tk.END)
+        current_theme = self.themes[self.theme_index]
+        current_phrase = self.phrases[current_theme][self.phrase_index]
+        for entry in self.alt_phrase_data[(current_theme, current_phrase)]:
+            if entry["alt_phrase"] == self.alt_phrase_index and entry["transcription"]:
+                self.transcription_text.insert("1.0", entry["transcription"])
                 break
 
-    def start_recording(self):
-        self.recording = True
-        current_phrase = self.phrases[self.phrase_index]
-        for entry in self.synonym_data[current_phrase]:
-            if entry["synonym"] == self.synonym_index and entry["audio_path"]:
-                try:
-                    if os.path.exists(entry["audio_path"]):
-                        os.remove(entry["audio_path"])
-                        print(f"Deleted old recording: {entry['audio_path']}")
-                    entry["audio_path"] = ""
-                except Exception as e:
-                    print(f"Error deleting old recording: {e}")
-                break
-
-        self.current_audio_path = None
-        self.record_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
-        self.play_button.config(state=tk.DISABLED)
-        self.new_recording_button.grid_remove()
-        self.status_label.config(text=f"Recording synonym {self.synonym_index} for phrase {self.phrases[self.phrase_index]}...")
-        self.timer_label.config(text="00:00")
-
-        self.recording_thread = threading.Thread(target=self.record_audio)
-        self.recording_thread.start()
-        self.timer_thread = threading.Thread(target=self.update_timer)
-        self.timer_thread.start()
-
-    def stop_recording(self):
-        self.recording = False
-        self.status_label.config(text="Stopping...")
-        self.root.update_idletasks()
-
-        if self.recording_thread and self.recording_thread.is_alive():
-            self.recording_thread.join(timeout=0.5)
-
-        if self.timer_thread and self.timer_thread.is_alive():
-            self.timer_thread.join(timeout=0.1)
-
-        self.record_button.config(state=tk.NORMAL)
-        self.stop_button.config(state=tk.DISABLED)
-        self.record_button.grid_remove()
-        self.stop_button.grid_remove()
-        self.recording_frame.grid_remove()  # Hide the Recording Controls frame after recording stops
-
-        if self.current_audio_path and os.path.exists(self.current_audio_path):
-            self.play_button.config(state=tk.NORMAL, text="Play")
-            self.new_recording_button.grid(row=0, column=1, padx=5, pady=5)
-            self.status_label.config(text="Recording stopped. Play the audio or re-record.")
-            self.progress_bar['value'] = 0
-        else:
-            self.play_button.config(state=tk.DISABLED, text="Play")
-            self.new_recording_button.grid_remove()
-            self.status_label.config(text="Error: Recorded audio file not found. Start a new recording.")
-
-    def record_audio(self):
-        current_phrase = self.phrases[self.phrase_index]
-        fs = 48000
-        min_duration = 10
-        max_duration = 60
-        chunk = 1024
-
-        p = None
-        stream = None
-        try:
-            p = pyaudio.PyAudio()
-            stream = p.open(format=pyaudio.paInt16,
-                            channels=1,
-                            rate=fs,
-                            input=True,
-                            frames_per_buffer=chunk)
-
-            frames = []
-            start_time = time.time()
-            elapsed_time = 0
-
-            while elapsed_time < max_duration:
-                if not self.recording:
-                    break
-                data = stream.read(chunk, exception_on_overflow=False)
-                frames.append(data)
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= min_duration:
-                    self.stop_button.config(state=tk.NORMAL)
-
-            if elapsed_time < min_duration and self.recording:
-                remaining_time = min_duration - elapsed_time
-                while elapsed_time < min_duration and self.recording:
-                    data = stream.read(chunk, exception_on_overflow=False)
-                    frames.append(data)
-                    elapsed_time = time.time() - start_time
-
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
-            stream = None
-            p = None
-
-            if not frames:
-                raise ValueError("No audio data recorded")
-
-            output_dir = BASE_DIR / "recordings"
-            output_dir.mkdir(exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_phrase = current_phrase.replace(" ", "_")
-            filename = f"{safe_phrase}_syn_{self.synonym_index}_{timestamp}.wav"
-            filepath = output_dir / filename
-
-            wf = wave.open(str(filepath), 'wb')
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(fs)
-            wf.writeframes(b''.join(frames))
-            wf.close()
-
-            if not os.path.exists(filepath):
-                raise FileNotFoundError(f"Audio file {filepath} was not created")
-
-            wf_test = wave.open(str(filepath), 'rb')
-            frames_to_read = min(48000, wf_test.getnframes())
-            data = wf_test.readframes(frames_to_read)
-            audio_data = np.frombuffer(data, dtype=np.int16)
-            avg_amplitude = np.mean(np.abs(audio_data))
-            wf_test.close()
-
-            self.current_audio_path = filepath
-
-            entry_exists = False
-            for entry in self.synonym_data[current_phrase]:
-                if entry["synonym"] == self.synonym_index:
-                    entry["audio_path"] = str(filepath)
-                    entry_exists = True
-                    break
-
-            if not entry_exists:
-                self.synonym_data[current_phrase].append({
-                    "synonym": self.synonym_index,
-                    "audio_path": str(filepath),
-                    "transcription": ""
-                })
-
-            self.update_recordings_list()
-
-        except Exception as e:
-            self.status_label.config(text=f"Error recording: {e}")
-            self.current_audio_path = None
-            if stream:
-                stream.stop_stream()
-                stream.close()
-            if p:
-                p.terminate()
-
-    def update_timer(self):
-        start_time = time.time()
-        while self.recording:
-            elapsed_time = time.time() - start_time
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            self.timer_label.config(text=f"{minutes:02d}:{seconds:02d}")
-            time.sleep(0.1)
-            if elapsed_time >= 60:
-                self.recording = False
-                break
-
-    def update_playback_timer(self, frame_rate):
-        while self.playing and self.current_frame < self.total_frames:
-            elapsed_time = self.current_frame / frame_rate
-            minutes = int(elapsed_time // 60)
-            seconds = int(elapsed_time % 60)
-            self.timer_label.config(text=f"{minutes:02d}:{seconds:02d}")
-            self.progress_bar['value'] = (self.current_frame / self.total_frames) * 100
-            self.root.update_idletasks()
-            time.sleep(0.1)
-        self.timer_label.config(text="00:00")
-        self.progress_bar['value'] = 0
-
-    def toggle_play_pause(self):
-        if self.recording:
-            self.status_label.config(text="Error: Cannot play audio while recording")
+    def on_history_select(self, event):
+        """Handle history selection"""
+        selection = self.history_tree.selection()
+        if not selection:
             return
-        if not self.current_audio_path or not os.path.exists(self.current_audio_path):
-            self.status_label.config(text="Error: No recording to play")
+        item = self.history_tree.item(selection[0])
+        version_text = item['values'][0]
+        version_num = int(version_text.split()[1])
+        self.alt_phrase_index = version_num
+        self.alt_phrase_var.set(f"Alternative {version_num}")
+        self.update_transcription_field()
+        self.status_label.config(text=f"Selected Alternative {version_num}")
+
+    def add_alt_phrase(self):
+        """Add new alternate phrase version"""
+        if not self.themes:
             return
-
-        if self.playing:
-            self.playing = False
-            self.status_label.config(text="Pausing...")
-            self.root.update_idletasks()
-            if self.play_thread and self.play_thread.is_alive():
-                self.play_thread.join(timeout=0.5)
-            if self.playback_timer_thread and self.playback_timer_thread.is_alive():
-                self.playback_timer_thread.join(timeout=0.5)
-            self.play_button.config(text="Play")
-            self.new_recording_button.grid(row=0, column=1, padx=5, pady=5)
-            self.status_label.config(text=f"Paused recording: {Path(self.current_audio_path).name}")
-        else:
-            self.playing = True
-            self.resources_cleaned = False
-            self.play_button.config(state=tk.NORMAL, text="Pause")
-            self.new_recording_button.grid_remove()
-            self.status_label.config(text=f"Resuming playback: {Path(self.current_audio_path).name}")
-            self.root.update_idletasks()
-            if self.play_thread and self.play_thread.is_alive():
-                self.play_thread.join(timeout=0.5)
-            self.cleanup_audio_resources()
-            self.play_thread = threading.Thread(target=self._play_audio_thread)
-            self.play_thread.start()
-
-    def _play_audio_callback(self, in_data, frame_count, time_info, status):
-        if not self.playing or self.current_frame >= self.total_frames:
-            return (None, pyaudio.paComplete)
-        data = self.wf.readframes(frame_count)
-        if not data:
-            self.playing = False
-            return (None, pyaudio.paComplete)
-        self.current_frame += frame_count
-        return (data, pyaudio.paContinue)
-
-    def _play_audio_thread(self):
-        try:
-            self.pyaudio_instance = pyaudio.PyAudio()
-            self.wf = wave.open(str(self.current_audio_path), 'rb')
-            sample_width = self.wf.getsampwidth()
-            channels = self.wf.getnchannels()
-            frame_rate = self.wf.getframerate()
-            if sample_width not in [1, 2, 4] or channels < 1 or frame_rate < 1:
-                raise ValueError(f"Invalid wave file parameters")
-            format_map = {1: pyaudio.paInt8, 2: pyaudio.paInt16, 4: pyaudio.paInt32}
-            audio_format = format_map.get(sample_width, pyaudio.paInt16)
-            self.stream = self.pyaudio_instance.open(
-                format=audio_format,
-                channels=channels,
-                rate=frame_rate,
-                output=True,
-                frames_per_buffer=4096,
-                stream_callback=self._play_audio_callback
-            )
-            self.total_frames = self.wf.getnframes()
-            if self.current_frame > 0:
-                self.wf.setpos(self.current_frame)
-            self.stream.start_stream()
-            self.playback_timer_thread = threading.Thread(target=self.update_playback_timer, args=(frame_rate,))
-            self.playback_timer_thread.start()
-            while self.playing and self.current_frame < self.total_frames:
-                if not self.stream.is_active():
-                    break
-                time.sleep(0.1)
-            self.playing = False
-            self.play_button.config(state=tk.NORMAL, text="Play")
-            self.new_recording_button.grid(row=0, column=1, padx=5, pady=5)
-            if self.current_frame >= self.total_frames:
-                self.current_frame = 0
-                self.status_label.config(text=f"Playback finished: {Path(self.current_audio_path).name}")
-            else:
-                self.status_label.config(text=f"Paused recording: {Path(self.current_audio_path).name}")
-            if self.playback_timer_thread and self.playback_timer_thread.is_alive():
-                self.playback_timer_thread.join(timeout=0.5)
-            self.cleanup_audio_resources()
-        except Exception as e:
-            self.status_label.config(text=f"Error playing audio: {e}")
-            self.playing = False
-            self.current_frame = 0
-            self.progress_bar['value'] = 0
-            self.play_button.config(state=tk.NORMAL, text="Play")
-            self.new_recording_button.grid(row=0, column=1, padx=5, pady=5)
-            self.cleanup_audio_resources()
-
-    def reset_to_recording_mode(self):
-        self.playing = False
-        self.current_frame = 0
-        self.progress_bar['value'] = 0
-        self.timer_label.config(text="00:00")
-        self.play_button.config(state=tk.DISABLED, text="Play")
-        self.new_recording_button.grid_remove()
-        self.recording_frame.grid(row=4, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E))  # Show the recording frame
-        self.record_button.grid(row=0, column=0, padx=5, pady=5)
-        self.stop_button.grid(row=0, column=1, padx=5, pady=5)
-        self.status_label.config(text="Ready to record")
-        if self.playback_timer_thread and self.playback_timer_thread.is_alive():
-            self.playback_timer_thread.join(timeout=0.5)
-        self.cleanup_audio_resources()
+        current_theme = self.themes[self.theme_index]
+        current_phrase = self.phrases[current_theme][self.phrase_index]
+        max_alt = max(entry["alt_phrase"] for entry in self.alt_phrase_data[(current_theme, current_phrase)]) if self.alt_phrase_data[(current_theme, current_phrase)] else 0
+        new_alt_num = max_alt + 1
+        self.alt_phrase_data[(current_theme, current_phrase)].append({
+            "alt_phrase": new_alt_num,
+            "transcription": ""
+        })
+        self.update_alt_phrase_combo()
+        self.alt_phrase_var.set(f"Alternative {new_alt_num}")
+        self.alt_phrase_index = new_alt_num
+        self.update_transcription_field()
+        self.update_history()
+        self.status_label.config(text=f"Created Alternative {new_alt_num}")
 
     def save_transcription(self):
-        transcription = self.transcription_entry.get().strip()
+        """Save current transcription"""
+        transcription = self.transcription_text.get("1.0", tk.END).strip()
         if not transcription:
-            self.status_label.config(text="Error: Transcription cannot be empty")
+            messagebox.showwarning("Warning", "Transcription cannot be empty")
             return
-        current_phrase = self.phrases[self.phrase_index]
+        
+        current_theme = self.themes[self.theme_index]
+        current_phrase = self.phrases[current_theme][self.phrase_index]
         entry_exists = False
-        for entry in self.synonym_data[current_phrase]:
-            if entry["synonym"] == self.synonym_index:
+        for entry in self.alt_phrase_data[(current_theme, current_phrase)]:
+            if entry["alt_phrase"] == self.alt_phrase_index:
                 entry["transcription"] = transcription
                 entry_exists = True
                 break
         if not entry_exists:
-            self.synonym_data[current_phrase].append({
-                "synonym": self.synonym_index,
-                "audio_path": "",
+            self.alt_phrase_data[(current_theme, current_phrase)].append({
+                "alt_phrase": self.alt_phrase_index,
                 "transcription": transcription
             })
-        self.status_label.config(text=f"Transcription saved for Synonym {self.synonym_index}")
-        self.transcription_entry.delete(0, tk.END)
-        self.update_recordings_list()
+        
+        self.status_label.config(text=f"✅ Saved Version {self.alt_phrase_index}")
+        self.transcription_text.delete("1.0", tk.END)
+        self.update_history()
+        self.update_stats()
 
-    def update_recordings_list(self):
-        self.recordings_listbox.delete(0, tk.END)
-        current_phrase = self.phrases[self.phrase_index]
-        for entry in self.synonym_data[current_phrase]:
-            audio_display = Path(entry["audio_path"]).name if entry["audio_path"] else "No recording"
-            self.recordings_listbox.insert(tk.END, f"Synonym {entry['synonym']}: {audio_display} | Transcription: {entry['transcription']}")
+    def update_history(self):
+        """Update history display"""
+        # Clear existing items
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+        
+        current_theme = self.themes[self.theme_index]
+        current_phrase = self.phrases[current_theme][self.phrase_index]
+        for entry in self.alt_phrase_data[(current_theme, current_phrase)]:
+            version = f"Version {entry['alt_phrase']}"
+            transcription = entry["transcription"] if entry["transcription"] else "No transcription"
+            length = len(entry["transcription"]) if entry["transcription"] else 0
+            # Truncate long transcriptions for display
+            display_trans = transcription[:50] + "..." if len(transcription) > 50 else transcription
+            self.history_tree.insert("", "end", values=(version, display_trans, length))
+
+    def update_stats(self):
+        """Update statistics display"""
+        self.stats_text.config(state='normal')
+        self.stats_text.delete("1.0", tk.END)
+        
+        stats = []
+        stats.append("TRANSCRIPTION STATISTICS\n" + "="*30 + "\n")
+        
+        total_themes = len(self.themes)
+        total_phrases = sum(len(self.phrases[theme]) for theme in self.themes)
+        total_transcriptions = 0
+        total_chars = 0
+        
+        for key in self.alt_phrase_data:
+            for entry in self.alt_phrase_data[key]:
+                if entry["transcription"]:
+                    total_transcriptions += 1
+                    total_chars += len(entry["transcription"])
+        
+        stats.append(f"Total Themes: {total_themes}")
+        stats.append(f"Total Phrases: {total_phrases}")
+        stats.append(f"Completed Transcriptions: {total_transcriptions}")
+        stats.append(f"Total Characters: {total_chars:,}")
+        
+        if total_transcriptions > 0:
+            stats.append(f"Average Length: {total_chars // total_transcriptions} characters")
+        
+        completion_rate = (total_transcriptions / total_phrases * 100) if total_phrases > 0 else 0
+        stats.append(f"Completion Rate: {completion_rate:.1f}%")
+        
+        stats.append("\n" + "BY THEME" + "\n" + "-"*20)
+        for theme in self.themes:
+            theme_phrases = len(self.phrases[theme])
+            theme_transcriptions = 0
+            for phrase in self.phrases[theme]:
+                for entry in self.alt_phrase_data.get((theme, phrase), []):
+                    if entry["transcription"]:
+                        theme_transcriptions += 1
+            stats.append(f"{theme}: {theme_transcriptions}/{theme_phrases} phrases completed")
+        
+        self.stats_text.insert("1.0", "\n".join(stats))
+        self.stats_text.config(state='disabled')
 
     def save_to_excel(self):
+        """Save all data to Excel file"""
         try:
-            output_dir = BASE_DIR / "recordings"
-            output_dir.mkdir(exist_ok=True)
             metadata_dir = BASE_DIR / "metadata"
             metadata_dir.mkdir(exist_ok=True)
-            excel_path = metadata_dir / "all_phrases_recordings.xlsx"
+            excel_path = metadata_dir / "transcriptions.xlsx"
+            
             all_data = []
-            max_synonyms = max(len(self.synonym_data[phrase]) for phrase in self.synonym_data) if self.synonym_data else 1
-            for phrase_key in sorted(self.synonym_data.keys()):
-                phrase_data = {"Phrase": phrase_key}
-                recordings = self.synonym_data[phrase_key]
-                for syn in range(1, max_synonyms + 1):
-                    entry_for_synonym = None
-                    for entry in recordings:
-                        if entry["synonym"] == syn:
-                            entry_for_synonym = entry
+            max_alt_phrases = max(len(self.alt_phrase_data[key]) for key in self.alt_phrase_data) if self.alt_phrase_data else 1
+            
+            for theme, phrase in sorted(self.alt_phrase_data.keys()):
+                phrase_data = {"Theme": theme, "Phrase": phrase}
+                transcriptions = self.alt_phrase_data[(theme, phrase)]
+                for alt in range(1, max_alt_phrases + 1):
+                    entry_for_alt_phrase = None
+                    for entry in transcriptions:
+                        if entry["alt_phrase"] == alt:
+                            entry_for_alt_phrase = entry
                             break
-                    if entry_for_synonym:
-                        phrase_data[f"Synonym_{syn}_Audio"] = entry_for_synonym["audio_path"]
-                        phrase_data[f"Synonym_{syn}_Transcription"] = entry_for_synonym["transcription"]
+                    if entry_for_alt_phrase:
+                        phrase_data[f"Alternate_Phrase_{alt}_Transcription"] = entry_for_alt_phrase["transcription"]
                     else:
-                        phrase_data[f"Synonym_{syn}_Audio"] = ""
-                        phrase_data[f"Synonym_{syn}_Transcription"] = ""
+                        phrase_data[f"Alternate_Phrase_{alt}_Transcription"] = ""
                 all_data.append(phrase_data)
+            
             df = pd.DataFrame(all_data)
-            columns = ["Phrase"] + [col for col in df.columns if col != "Phrase"]
+            columns = ["Theme", "Phrase"] + [col for col in df.columns if col.startswith("Alternate_Phrase_")]
             df = df[columns]
             df.to_excel(excel_path, index=False)
-            self.status_label.config(text=f"Data saved to {excel_path}")
+            
+            self.status_label.config(text=f"✅ Data saved to {excel_path}")
+            self.update_stats()  # Refresh stats after save
+            messagebox.showinfo("Success", f"Data successfully saved to:\n{excel_path}")
+            
         except Exception as e:
-            self.status_label.config(text=f"Error: Failed to save Excel: {e}")
+            error_msg = f"Failed to save Excel file: {e}"
+            self.status_label.config(text=f"❌ {error_msg}")
+            messagebox.showerror("Error", error_msg)
 
 if __name__ == "__main__":
     import os
     os.environ["TK_SILENCE_DEPRECATION"] = "1"
     root = tk.Tk()
-    app = BangaApp(root)
+    app = TranscriptionApp(root)
     root.mainloop()
