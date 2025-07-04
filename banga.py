@@ -448,6 +448,11 @@ class TranscriptionApp:
         
         # Find next available alternative number
         alternatives = self.phrase_data[(current_theme, current_phrase)]["alternatives"]
+
+        if len(alternatives) >= 3:
+            messagebox.showwarning("Warning", "Maximum of 3 alternatives allowed")
+            return
+    
         max_alt = max(alternatives.keys()) if alternatives else 0
         new_alt_num = max_alt + 1
         
@@ -479,7 +484,10 @@ class TranscriptionApp:
             self.phrase_data[(current_theme, current_phrase)]["alternatives"][alt_num] = transcription
         
         self.status_label.config(text=f"✅ Saved {self.current_version}")
-        self.transcription_text.delete("1.0", tk.END)
+        #removed to allow editing unless a new alternative is created or another transcription is selected: 
+        # makes it less likely to mistakenly 
+        # override current trancription with new one with the intention of transcribing a new one
+        # self.transcription_text.delete("1.0", tk.END) 
         self.update_history()
         self.update_stats()
 
@@ -578,7 +586,8 @@ class TranscriptionApp:
             # Find maximum number of alternatives
             for phrase_data in self.phrase_data.values():
                 if phrase_data["alternatives"]:
-                    max_alternatives = max(max_alternatives, max(phrase_data["alternatives"].keys()))
+                    # max_alternatives = max(max_alternatives, max(phrase_data["alternatives"].keys()))
+                    max_alternatives = min(3, max(phrase_data["alternatives"].keys()))
             
             for theme, phrase in sorted(self.phrase_data.keys()):
                 row_data = {
